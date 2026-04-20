@@ -11,6 +11,12 @@ const PORT = Number(process.env.PORT || 4000);
 app.use(cors());
 app.use(express.json());
 
+// 🔵 Logging de todas las requests
+app.use((req, res, next) => {
+  console.log(`📍 [${new Date().toLocaleTimeString()}] ${req.method} ${req.path}`);
+  next();
+});
+
 app.get('/health', async (_req, res) => {
   try {
     await pool.query('SELECT 1');
@@ -220,24 +226,24 @@ app.get('/api/historial/:usuarioId', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT
-         s.solicitud_id,
-         s.usuario_id,
-         s.precio_ofrecido,
-         s.distancia_km,
-         s.estado,
-         s.hora_inicio,
-         s.hora_fin,
-         COALESCE(s.hora_fin, s.hora_inicio) AS fecha_evento,
-         u.nombre AS nombre_usuario,
-         CASE
-           WHEN s.usuario_id = ? THEN 'solicitud_usuario'
-           ELSE 'pedido_transportista'
-         END AS tipo_historial
-       FROM solicitud s
-       JOIN usuario u ON s.usuario_id = u.usuario_id
-       WHERE s.usuario_id = ?
-          OR s.estado = 'aceptado'
-       ORDER BY s.solicitud_id DESC`,
+          s.solicitud_id,
+          s.usuario_id,
+          s.precio_ofrecido,
+          s.distancia_km,
+          s.estado,
+          s.hora_inicio,
+          s.hora_fin,
+          COALESCE(s.hora_fin, s.hora_inicio) AS fecha_evento,
+          u.nombre AS nombre_usuario,
+          CASE
+            WHEN s.usuario_id = ? THEN 'solicitud_usuario'
+            ELSE 'pedido_transportista'
+          END AS tipo_historial
+        FROM solicitud s
+        JOIN usuario u ON s.usuario_id = u.usuario_id
+        WHERE s.usuario_id = ?
+           OR s.estado = 'aceptado'
+        ORDER BY s.solicitud_id DESC`,
       [usuarioId, usuarioId]
     );
 
@@ -253,6 +259,66 @@ app.get('/api/historial/:usuarioId', async (req, res) => {
       error: error.message,
     });
   }
+});
+
+// --- Mensajes ---
+
+app.post('/api/enviar-mensaje', async (req, res) => {
+  const { flete_id, emisor_id, receptor_id, mensaje } = req.body;
+
+  if (!flete_id || !emisor_id || !receptor_id || !mensaje) {
+    return res.status(400).json({ ok: false, message: 'Todos los campos son obligatorios' });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO mensajes (flete_id, emisor_id, receptor_id, mensaje, fecha_envio)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [flete_id, emisor_id, receptor_id, mensaje]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      message: 'Mensaje enviado correctamente',
+      data: { id: result.insertId, flete_id, emisor_id, receptor_id, mensaje }
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Error al enviar mensaje', error: error.message });
+  }
+});
+
+app.get('/api/mensajes/:fleteId', async (req, res) => {
+  const fleteId = Number(req.params.fleteId);
+
+  console.log('🔵 GET /api/mensajes/:fleteId - fleteId:', fleteId);
+
+  if (!fleteId) {
+    console.error('❌ fleteId invalido');
+    return res.status(400).json({ ok: false, message: 'fleteId invalido' });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM mensajes WHERE flete_id = ? ORDER BY fecha_envio ASC',
+      [fleteId]
+    );
+
+    console.log('✅ Mensajes encontrados:', rows.length);
+    return res.status(200).json({
+      ok: true,
+      message: 'Mensajes obtenidos correctamente',
+      data: rows
+    });
+  } catch (error) {
+    console.error('❌ Error en BD:', error.message);
+    return res.status(500).json({ ok: false, message: 'Error al obtener mensajes', error: error.message });
+  }
+});
+
+// 🔴 Catch-all para rutas no encontradas
+app.use((req, res) => {
+  console.error(`❌ 404 - Ruta no encontrada: ${req.method} ${req.path}`);
+  res.status(404).json({ ok: false, message: 'Ruta no encontrada', path: req.path, method: req.method });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
